@@ -1,0 +1,50 @@
+{
+  "kill": 2000,
+  "toll": 1000,
+  "dataFolder": "2022_03",
+  "threadNumber": 100,
+  "token": {
+    "clientID": "php-ownership-api",
+    "clientSecret": "a347fb2d-87f0-4d41-89a9-b746b5273ccd",
+    "username": "trafficweatherdisit",
+    "password": "agjd44gf%6FD$sfgad",
+    "url": "https://www.snap4city.org/auth/realms/master/protocol/openid-connect/token"
+  },
+  "patch": {
+    "url": "https://broker1.snap4city.org:8080/v2/entities/"
+  },
+  "separator": "$",
+  "arraySeparator": "{%}",
+  "mapping": {
+    "id": "data${%}0$sensor_id",
+    "type": "traffic",
+    "anomalyLevel": {
+      "type": "float",
+      "value": "data${%}0$anom_level"
+    },
+    "averageSpeed": {
+      "type": "float",
+      "value": "data${%}0$speed"
+    },
+    "avgTime": {
+      "type": "float",
+      "value": "data${%}0$t_time"
+    },
+    "concentration": {
+      "type": "float",
+      "value": "data${%}0$dens"
+    },
+    "congestionLevel": {
+      "type": "float",
+      "value": "data${%}0$cong_level"
+    },
+    "dateObserved": {
+      "type": "string",
+      "value": "data${%}0$datetime"
+    },
+    "vehicleFlow": {
+      "type": "float",
+      "value": "data${%}0$flow"
+    }
+  }
+}

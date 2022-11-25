@@ -1,0 +1,17 @@
+{
+"id":"-----", v
+"type":"traffic",
+"anomalyLevel":{"type":"float","value":103.72174}, v
+"averageSpeed":{"type":"float","value":57.83132}, v
+"avgDistance":{"type":"float","value":""},
+"avgTime":{"type":"float","value":20.23125}, v
+"concentration":{"type":"float","value":4.520115}, v
+"congestionLevel":{"type":"float","value":103.75001}, v
+"dateObserved":{"type":"string","value":"2022-11-08T14:20:00.000Z"}, v
+"latitude":{"type":"float","value":"43.79534912"}, v
+"longitude":{"type":"float","value":"11.15452957"}, v
+"occupancy":{"type":"float","value":""},
+"speedPercentile":{"type":"float","value":""},
+"thresholdPerc":{"type":"float","value":""},
+"vehicleFlow":{"type":"float","value":261.4042} v
+}
