@@ -1,6 +1,6 @@
 {
   "kill": 2000,
-  "toll": 1000,
+  "toll": 200,
   "dataFolder": "2022_03",
   "threadNumber": 100,
   "token": {

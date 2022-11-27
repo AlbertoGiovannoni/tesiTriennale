@@ -10,24 +10,28 @@ import requests
 import jwt
 import sys
 from parser import parser
+import urllib3
+
 
 app = flask.Flask(__name__)
 os.environ["FLASK_APP"] = __name__ + ".py"
 
 
 class thread_gen(Thread):
-    def __init__(self, kill, toll):
+    def __init__(self, kill, toll, nThread):
         Thread.__init__(self)
         self.stop = False
         self.kill = kill
         self.toll = toll
+        self.nThread = nThread
 
     def run(self):
         stop_event = threading.Event()
         threads = []
-        for r in observations:
-            t = threading.Thread(target=apiPatch, args=(
-            config, id_name, s.cookies.get("access_token"), r, stop_event, self.kill, self.toll))
+        parts = list(split(observations, self.nThread))
+        for i in range(self.nThread):
+            t = threading.Thread(target=target, args=(
+            config, s.cookies.get("access_token"), parts[i], stop_event, self.kill, self.toll))
             t.daemon = True
             t.start()
             threads.append(t)
@@ -35,18 +39,26 @@ class thread_gen(Thread):
         j.daemon = True
         j.start()
         stop_event.wait()
+        td = time.time() - timeStart
+        print(f"--- Execution time : {td:.01f}s ---")
         sys.exit()
 
 
 @app.route('/scriptBello', methods=['GET', 'POST'])
 def scriptBello():
     # GET PARAMS IN INPUT (day_date,sensor_uri)
-    currentTime = datetime.now()
-    global config, id_name, s, append_services, jsize, total, partial, exec
+    global config, id_name, s, append_services, jsize, total, partial, exec, timeStart
     global observations
     global failed
     observations = []
     failed = []
+
+    currentTime = datetime.now()
+    timeStart = time.time()
+    urllib3.disable_warnings()
+
+    file_to_delete = open("failed.txt", 'w')
+    file_to_delete.close()
 
     try:
         root_path = os.getcwd()
@@ -75,6 +87,7 @@ def scriptBello():
     try:
         kill = config['kill']
         toll = config['toll']
+        nThread = config["threadNumber"]
 
     except Exception as e:
         print("Error getting: " + str(e))
@@ -109,7 +122,7 @@ def scriptBello():
 
             # PATCH FINALE
             if type(s.cookies.get("access_token")) == str and s.cookies.get("access_token") != '':
-                gen = thread_gen(kill, toll)
+                gen = thread_gen(kill, toll, nThread)
                 gen.start()
                 gen.join()
 
@@ -118,9 +131,11 @@ def scriptBello():
                 access_token, refresh_token = accessToken(config)
                 s.cookies.set("access_token", access_token)
                 s.cookies.set("refresh_token", refresh_token)
-                gen = thread_gen(kill, toll)
+                gen = thread_gen(kill, toll, nThread)
                 gen.start()
                 gen.join()
+        print(len(failed))
+        print(len(observations))
         return failed
 
     except Exception as e:
@@ -130,6 +145,10 @@ def scriptBello():
 
 
 ###############################################################################
+def split(a, n):
+    k, m = divmod(len(a), n)
+    return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n))
+
 
 def idDevice(conf, dta):
     deviceName = ''
@@ -178,7 +197,7 @@ def accessToken(conf):
         print(response.text)
         response.raise_for_status()
 
-    except requests.exceptions.HTTPError as errh:  # eccezione presa qui
+    except requests.exceptions.HTTPError as errh:
         print(currentTime, "Http Error:", errh)
     except requests.exceptions.ConnectionError as errc:
         print(currentTime, "Error Connecting:", errc)
@@ -243,11 +262,18 @@ def refreshToken(conf, refreshToken):
     return access_token, refresh_token
 
 
+def target(conf, accessToken, parts, stop_event, kill, toll):
+    for r in parts:
+        q = copy.deepcopy(r)
+        for i in ['id', 'type']:
+            q.pop(i)
+        apiPatch(conf, r['id'], accessToken, q, stop_event, kill, toll)
+
+
 def apiPatch(conf, device, accessToken, r, stop_event, kill, toll):
-    global exec, partial, total, m
+    global exec, partial, total, response
     url = conf.get('patch').get('url') + device + '/attrs?elementid=' + device + '&type=' + conf.get('mapping').get(
         'type')
-
     head = {
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -256,11 +282,10 @@ def apiPatch(conf, device, accessToken, r, stop_event, kill, toll):
     currentTime = datetime.now()
     try:
         exec += 1
-        if exec % 100 == 0:
+        if exec % toll == 0:
             partial = 0
-        response = requests.request("PATCH", url, headers=head, data=json.dumps(r))
-        response.raise_for_status()
-        m = json.dumps(r)
+        #response = requests.request("PATCH", url, headers=head, data=json.dumps(r), verify=False)
+        raise Exception("siudewe")
     except Exception as ex:
         c = 0
         success = False
@@ -269,18 +294,21 @@ def apiPatch(conf, device, accessToken, r, stop_event, kill, toll):
             success = retry(conf, device, accessToken, r)
             c += 1
         if not success:
-            m = json.dumps(r)
-            saveFail(m, ex)
+            saveFail(json.dumps(r), ex, kill, toll)
             check(stop_event, total, partial, kill, toll)
 
 
-def saveFail(m, err):
+def saveFail(m, err, kill, toll):
     global total, partial
-
     total += 1
     partial += 1
-    js = '{"JSON": "' + m + '", "error": "' + str(err) + '"}'
+    print(len(failed))
+    js = '{"JSON": ' + m + ', "error": "' + str(err) + '"}'
     failed.append(json.loads(js))
+    '''if total < kill and partial < toll:
+        print("\n")
+        with open('failed.txt', 'a') as f:
+            f.write(js + "\n")'''
 
 
 def check(stop_event, total, partial, kill, toll):
@@ -306,12 +334,11 @@ def retry(conf, device, accessToken, r):
             "Authorization": f"bearer {accessToken}",
         }
         currentTime = datetime.now()
-        m = json.dumps(r)
-
-        response = requests.request("PATCH", url, headers=head, data=m)
+        #response = requests.request("PATCH", url, headers=head, data=json.dumps(r), verify=False)
+        raise Exception("siudewe")
         response.raise_for_status()
         return True
-    except Exception:
+    except Exception as ex:
         return False
 
 

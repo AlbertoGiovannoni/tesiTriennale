@@ -28,7 +28,7 @@ class parser:
                 filename = os.fsdecode(file)
                 if filename.endswith(".xml"):
                     if count_file % 100 == 0:
-                        print("{:.1f}".format(count_file / number_of_file * 100), "%")
+                        print("--- Conversione formato: {:.1f}".format(count_file / number_of_file * 100), "% ---")
                     count_file = count_file + 1
                     tmp_df = pd.DataFrame(columns=cols)
                     filepath = os.path.join(root, file)
