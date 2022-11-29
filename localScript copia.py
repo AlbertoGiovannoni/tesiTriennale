@@ -4,14 +4,13 @@ import time
 from threading import Thread
 import flask
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import copy
 import requests
 import jwt
 import sys
 from parser import parser
 import urllib3
-
 
 app = flask.Flask(__name__)
 os.environ["FLASK_APP"] = __name__ + ".py"
@@ -44,6 +43,7 @@ class thread_gen(Thread):
         print(f"--- Execution time : {td:.01f}s ---")
         sys.exit()
 
+
 class working_thread(Thread):
     def __init__(self, conf, token, data, stop_event, kill, toll):
         Thread.__init__(self)
@@ -61,15 +61,13 @@ class working_thread(Thread):
     def run(self):
         for r in self.data:
             if not self.stop.isSet():
-                q = copy.deepcopy(r)
-                for i in ['id', 'type']:
-                    q.pop(i)
-                apiPatch(self.conf, r['id'], self.token, q, self.stop_event, self.kill, self.toll)
+                apiPatch(self.conf, r['id'], self.token, r, self.stop_event, self.kill, self.toll)
+
 
 @app.route('/scriptBello', methods=['GET', 'POST'])
 def scriptBello():
     # GET PARAMS IN INPUT (day_date,sensor_uri)
-    global config, id_name, s, append_services, jsize, total, partial, exec, timeStart, interr
+    global config, id_name, s, append_services, jsize, total, partial, exec, timeStart, interr, nFailure
     global observations
     global failed
     observations = []
@@ -121,6 +119,7 @@ def scriptBello():
         partial = 0
         exec = 0
         interr = False
+        nFailure = 0
         observations = parser.xmlParse(config)
         jsize = len(observations)
         data = observations[0]
@@ -132,14 +131,15 @@ def scriptBello():
             currentTime = datetime.now()
 
             if s.cookies.get("access_token") == None or s.cookies.get("access_token") == "":
-                access_token, refresh_token = accessToken(config)  # crea il token
+                access_token, refresh_token = accessToken(config)
                 s.cookies.set("access_token", access_token)
                 s.cookies.set("refresh_token", refresh_token)
 
 
+
             else:
                 dateExp = verifySignature(s.cookies.get("access_token"))
-                if currentTime > dateExp:  # credo che dateExp indichi il momento in cui il token non è più valido, e va refreshato
+                if currentTime > dateExp:
                     access_token, refresh_token = refreshToken(config, s.cookies.get("refresh_token"))
                     s.cookies.set("access_token", access_token)
                     s.cookies.set("refresh_token", refresh_token)
@@ -238,7 +238,7 @@ def accessToken(conf):
 def verifySignature(accessToken):
     decodeToken = jwt.decode(accessToken, options={"verify_signature": False})
     epoch_time = decodeToken['exp']
-    dateExp = datetime.fromtimestamp(epoch_time)  # restituisce la data corrispondente al timestamp epoch_time
+    dateExp = datetime.fromtimestamp(epoch_time)
 
     return dateExp
 
@@ -270,6 +270,7 @@ def refreshToken(conf, refreshToken):
         response.raise_for_status()
     except requests.exceptions.HTTPError as errh:
         print(currentTime, "Http Error:", errh)
+        print(response.text)
     except requests.exceptions.ConnectionError as errc:
         print(currentTime, "Error Connecting:", errc)
     except requests.exceptions.Timeout as errt:
@@ -285,15 +286,24 @@ def refreshToken(conf, refreshToken):
 
 
 def apiPatch(conf, device, accessToken, r, stop_event, kill, toll):
-    global exec, partial, total, response
+    global exec, partial, total, response, nFailure, dateExp
+
+    currentTime = datetime.now()
+    dateExp = verifySignature(s.cookies.get("access_token"))
+    #if currentTime > dateExp:
+    if dateExp - currentTime < timedelta(days=0, seconds=55, microseconds=0, milliseconds=0, minutes=24, hours=0, weeks=0):
+        access_token, refresh_token = refreshToken(config, s.cookies.get("refresh_token"))
+        s.cookies.set("refresh_token", refresh_token)
+        s.cookies.set("access_token", access_token)
+        dateExp = verifySignature(s.cookies.get("access_token"))
+
     url = conf.get('patch').get('url') + device + '/attrs?elementid=' + device + '&type=' + conf.get('mapping').get(
         'type')
     head = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Authorization": f"bearer {accessToken}",
+        "Authorization": f"bearer {s.cookies.get('access_token')}",
     }
-    currentTime = datetime.now()
     try:
         exec += 1
         if exec % 100 == 0:
@@ -301,7 +311,13 @@ def apiPatch(conf, device, accessToken, r, stop_event, kill, toll):
         if exec % 1000 == 0:
             print("--- Loading: {:.0f}".format(exec / len(observations) * 100), "% ---")
             print("--- Number of errors: " + str(len(failed)) + " ---")
-        response = requests.request("PATCH", url, headers=head, data=json.dumps(r), verify=False)
+        q = copy.deepcopy(r)
+        for i in ['id', 'type']:
+            q.pop(i)
+        response = requests.request("PATCH", url, headers=head, data=json.dumps(q), verify=False)
+        if len(failed) > nFailure:
+            nFailure = len(failed)
+            print(response.text)
         response.raise_for_status()
     except Exception as ex:
         c = 0
