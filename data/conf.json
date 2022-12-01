@@ -2,7 +2,7 @@
   "kill": 2000,
   "toll": 200,
   "dataFolder": "2022_03",
-  "threadNumber": 100,
+  "threadNumber": 80,
   "token": {
     "clientID": "php-ownership-api",
     "clientSecret": "a347fb2d-87f0-4d41-89a9-b746b5273ccd",

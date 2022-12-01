@@ -1,26 +1,27 @@
 import json
+import subprocess
 import threading
 import time
 from threading import Thread
 import flask
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import copy
 import requests
 import jwt
 import sys
-from parser import parser
+from parserFunc import parser
 import urllib3
-
+import jsonpickle
 
 app = flask.Flask(__name__)
 os.environ["FLASK_APP"] = __name__ + ".py"
 
+subprocess.check_call([sys.executable, "-m", "pip", "install", 'jsonpickle'])
 
 class thread_gen(Thread):
     def __init__(self, kill, toll, nThread):
         Thread.__init__(self)
-        self.stop = False
         self.kill = kill
         self.toll = toll
         self.nThread = nThread
@@ -30,24 +31,47 @@ class thread_gen(Thread):
         threads = []
         parts = list(split(observations, self.nThread))
         for i in range(self.nThread):
-            t = threading.Thread(target=target, args=(
-            config, s.cookies.get("access_token"), parts[i], stop_event, self.kill, self.toll))
-            t.daemon = True
+            t = working_thread(config, s.cookies.get("access_token"), parts[i], stop_event, self.kill, self.toll)
             t.start()
             threads.append(t)
         j = threading.Thread(target=joiner, args=(stop_event, threads))
-        j.daemon = True
         j.start()
         stop_event.wait()
+        if interr == True:
+            print("Caricamento interrotto a causa dei troppi errori")
+        for t in threads:
+            t.stopThread()
         td = time.time() - timeStart
+        print("The program has uploaded " + str(exec) + " of " + str(len(observations)))
+        print("Total number of error: " + str(len(failed)))
         print(f"--- Execution time : {td:.01f}s ---")
         sys.exit()
+
+
+class working_thread(Thread):
+    def __init__(self, conf, token, data, stop_event, kill, toll):
+        Thread.__init__(self)
+        self.conf = conf
+        self.token = token
+        self.data = data
+        self.stop_event = stop_event
+        self.stop = threading.Event()
+        self.kill = kill
+        self.toll = toll
+
+    def stopThread(self):
+        self.stop.set()
+
+    def run(self):
+        for r in self.data:
+            if not self.stop.isSet():
+                apiPatch(self.conf, r['id'], self.token, r, self.stop_event, self.kill, self.toll)
 
 
 @app.route('/scriptBello', methods=['GET', 'POST'])
 def scriptBello():
     # GET PARAMS IN INPUT (day_date,sensor_uri)
-    global config, id_name, s, append_services, jsize, total, partial, exec, timeStart
+    global config, id_name, s, append_services, jsize, total, partial, exec, timeStart, interr, nFailure, tokenTime
     global observations
     global failed
     observations = []
@@ -98,6 +122,8 @@ def scriptBello():
         total = 0
         partial = 0
         exec = 0
+        interr = False
+        nFailure = 0
         observations = parser.xmlParse(config)
         jsize = len(observations)
         data = observations[0]
@@ -109,13 +135,14 @@ def scriptBello():
             currentTime = datetime.now()
 
             if s.cookies.get("access_token") == None or s.cookies.get("access_token") == "":
-                access_token, refresh_token = accessToken(config)  # crea il token
+                access_token, refresh_token = accessToken(config)
                 s.cookies.set("access_token", access_token)
                 s.cookies.set("refresh_token", refresh_token)
+                tokenTime = datetime.now()
 
             else:
                 dateExp = verifySignature(s.cookies.get("access_token"))
-                if currentTime > dateExp:  # credo che dateExp indichi il momento in cui il token non è più valido, e va refreshato
+                if currentTime > dateExp:
                     access_token, refresh_token = refreshToken(config, s.cookies.get("refresh_token"))
                     s.cookies.set("access_token", access_token)
                     s.cookies.set("refresh_token", refresh_token)
@@ -134,9 +161,7 @@ def scriptBello():
                 gen = thread_gen(kill, toll, nThread)
                 gen.start()
                 gen.join()
-        print(len(failed))
-        print(len(observations))
-        return failed
+        return jsonpickle.encode(failed)
 
     except Exception as e:
         print("Error: " + str(e))
@@ -193,10 +218,8 @@ def accessToken(conf):
     currentTime = datetime.now()
     try:
         response = requests.request("POST", urlToken, data=payload, headers=header)
-        print(response.reason)
         print(response.text)
         response.raise_for_status()
-
     except requests.exceptions.HTTPError as errh:
         print(currentTime, "Http Error:", errh)
     except requests.exceptions.ConnectionError as errc:
@@ -216,7 +239,7 @@ def accessToken(conf):
 def verifySignature(accessToken):
     decodeToken = jwt.decode(accessToken, options={"verify_signature": False})
     epoch_time = decodeToken['exp']
-    dateExp = datetime.fromtimestamp(epoch_time)  # restituisce la data corrispondente al timestamp epoch_time
+    dateExp = datetime.fromtimestamp(epoch_time)
 
     return dateExp
 
@@ -247,7 +270,9 @@ def refreshToken(conf, refreshToken):
 
         response.raise_for_status()
     except requests.exceptions.HTTPError as errh:
-        print(currentTime, "Http Error:", errh)
+        errh = ""
+        #print(currentTime, "Http Error:", errh)
+        #print(response.text)
     except requests.exceptions.ConnectionError as errc:
         print(currentTime, "Error Connecting:", errc)
     except requests.exceptions.Timeout as errt:
@@ -262,30 +287,39 @@ def refreshToken(conf, refreshToken):
     return access_token, refresh_token
 
 
-def target(conf, accessToken, parts, stop_event, kill, toll):
-    for r in parts:
-        q = copy.deepcopy(r)
-        for i in ['id', 'type']:
-            q.pop(i)
-        apiPatch(conf, r['id'], accessToken, q, stop_event, kill, toll)
-
-
 def apiPatch(conf, device, accessToken, r, stop_event, kill, toll):
-    global exec, partial, total, response
+    global exec, partial, total, response, nFailure, dateExp, tokenTime
+    currentTime = datetime.now()
+    dateExp = verifySignature(s.cookies.get("access_token"))
+    if datetime.now() - tokenTime > timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=3, hours=0, weeks=0):
+        tokenTime = datetime.now()
+        access_token, refresh_token = refreshToken(config, s.cookies.get("refresh_token"))
+        s.cookies.set("refresh_token", refresh_token)
+        s.cookies.set("access_token", access_token)
+        dateExp = verifySignature(s.cookies.get("access_token"))
+
     url = conf.get('patch').get('url') + device + '/attrs?elementid=' + device + '&type=' + conf.get('mapping').get(
         'type')
     head = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Authorization": f"bearer {accessToken}",
+        "Authorization": f"bearer {s.cookies.get('access_token')}",
     }
-    currentTime = datetime.now()
     try:
         exec += 1
-        if exec % toll == 0:
+        if exec % 100 == 0:
             partial = 0
-        #response = requests.request("PATCH", url, headers=head, data=json.dumps(r), verify=False)
-        raise Exception("siudewe")
+        if exec % 1000 == 0:
+            print("--- Loading: {:.0f}".format(exec / len(observations) * 100), "% ---")
+            print("--- Number of errors: " + str(len(failed)) + " ---")
+        q = copy.deepcopy(r)
+        for i in ['id', 'type']:
+            q.pop(i)
+        response = requests.request("PATCH", url, headers=head, data=json.dumps(q), verify=False)
+        if len(failed) > nFailure:
+            nFailure = len(failed)
+            print(response.text)
+        response.raise_for_status()
     except Exception as ex:
         c = 0
         success = False
@@ -294,26 +328,25 @@ def apiPatch(conf, device, accessToken, r, stop_event, kill, toll):
             success = retry(conf, device, accessToken, r)
             c += 1
         if not success:
-            saveFail(json.dumps(r), ex, kill, toll)
+            saveFail(json.dumps(r), ex)
             check(stop_event, total, partial, kill, toll)
 
 
-def saveFail(m, err, kill, toll):
+def saveFail(m, err):
     global total, partial
     total += 1
     partial += 1
-    print(len(failed))
     js = '{"JSON": ' + m + ', "error": "' + str(err) + '"}'
     failed.append(json.loads(js))
-    '''if total < kill and partial < toll:
-        print("\n")
-        with open('failed.txt', 'a') as f:
-            f.write(js + "\n")'''
+    with open('failed.txt', 'a') as f:
+        f.write(js + "\n")
 
 
 def check(stop_event, total, partial, kill, toll):
+    global interr
     if total > kill or partial > toll:
         stop_event.set()
+        interr = True
 
 
 def joiner(stop_event, threads):
@@ -334,8 +367,7 @@ def retry(conf, device, accessToken, r):
             "Authorization": f"bearer {accessToken}",
         }
         currentTime = datetime.now()
-        #response = requests.request("PATCH", url, headers=head, data=json.dumps(r), verify=False)
-        raise Exception("siudewe")
+        response = requests.request("PATCH", url, headers=head, data=json.dumps(r), verify=False)
         response.raise_for_status()
         return True
     except Exception as ex:
